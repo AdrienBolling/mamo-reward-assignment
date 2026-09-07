@@ -1,0 +1,4 @@
+[submodule "third_party/MA-Craftax"]
+	path = third_party/MA-Craftax
+	url = https://github.com/AdrienBolling/MA-Craftax.git
+	branch = main

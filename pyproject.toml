@@ -1,0 +1,130 @@
+[project]
+name = "mamora"
+version = "0.1.0"
+description = "Reward assignment for open-ended multi-agent multi-objective RL on MA-Craftax"
+readme = "README.md"
+authors = [
+    { name = "AdrienBolling", email = "bolling.adrien@gmail.com" }
+]
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "hydra-core>=1.3.6",
+    "jax>=0.11.1",
+    "jaxmarl",
+    "ma-craftax",
+    "numpy>=2.5.3",
+    "omegaconf>=2.3.1",
+]
+
+[project.scripts]
+mamora-run = "mamora.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.9,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.uv]
+# `uv sync` installs dev + gpu by default so the local env always has CUDA;
+# CI opts out with UV_NO_GROUP=gpu.
+default-groups = ["dev", "gpu"]
+# Linux-only lock: avoids resolving nvidia-* wheels for other platforms.
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.sources]
+jaxmarl = { git = "https://github.com/FLAIROx/JaxMARL", rev = "b0c4d77b2cc06711031aec846a55ed0c8cf0f6e9" }
+ma-craftax = { workspace = true, editable = true }
+
+[tool.uv.workspace]
+members = [
+    "third_party/MA-Craftax",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.6.2",
+    "pytest>=9.1.1",
+    "ruff==0.16.6",
+    "ty==0.0.78",
+]
+gpu = [
+    "jax[cuda12]>=0.11.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+
+# ---------------------------------------------------------------------------
+# ruff: lint + format. Rule changes and inline `# noqa` need explicit user
+# authorization (see CLAUDE.md). Accepted form: `# noqa: RULE  # reason: ...`.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["third_party"]
+
+[tool.ruff.lint]
+select = [
+  "E", "W", # pycodestyle
+  "F",      # pyflakes: undefined names, unused imports
+  "I",      # isort
+  "UP",     # pyupgrade: enforce 3.12 syntax
+  "B",      # bugbear: mutable defaults, zip without strict, ...
+  "SIM",    # simplify
+  "C4",     # comprehensions
+  "RUF",    # ruff-specific, incl. RUF100 (unused `# noqa`)
+  "N",      # pep8-naming
+  "ANN",    # annotations everywhere, so ty has real types
+  "PT",     # pytest style
+  "PTH",    # pathlib over os.path
+  "NPY",    # numpy: legacy random API, deprecated aliases
+  "PERF",   # perflint
+  "TID",    # tidy imports: no relative parent imports
+  "PIE",    # misc: unnecessary pass, duplicate class fields
+  "PGH",    # pygrep-hooks: no blanket `# type: ignore` / `# noqa`
+]
+# Deliberately not enabled: D (docstrings), PL (pylint), S (bandit), T20 (print),
+# ARG (JAX callbacks take unused args), COM/ISC/Q (conflict with the formatter),
+# FBT (bool flags like dry_run are idiomatic), ERA, TRY, RET.
+ignore = [
+  "ANN401", # `Any` is legitimate for untyped env objects / pytrees
+  "N803",   # math-style argument names (K, W)
+  "N806",   # math-style variable names
+  "E501",   # ruff-format owns line wrapping
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mamora"]
+known-third-party = ["craftax", "craftax_ma", "craftax_coop", "environment_base", "jaxmarl"]
+
+[tool.ruff.lint.flake8-annotations]
+suppress-dummy-args = true
+mypy-init-return = true
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# ty: type checking. Accepted suppression form: `# ty: ignore[rule]  # reason: ...`
+# (bare `# ty: ignore` is an error), only with explicit user authorization.
+# ---------------------------------------------------------------------------
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["src", "tests"]
+exclude = ["third_party"]
+
+[tool.ty.rules]
+possibly-unresolved-reference = "error"
+blanket-ignore-comment = "error"
+ignore-comment-unknown-rule = "error"
+invalid-ignore-comment = "error"
+deprecated = "warn"
+
+[tool.ty.terminal]
+error-on-warning = true
