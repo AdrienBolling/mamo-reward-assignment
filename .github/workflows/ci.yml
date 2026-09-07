@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           submodules: recursive # third_party/MA-Craftax (public fork, no token needed)
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1 # no floating major tag is published for setup-uv
         with:
           version: "0.12.9" # keep equal to the uv-pre-commit rev
           enable-cache: true
