@@ -12,7 +12,7 @@ Hydra config under `conf/`.
 |---|---|
 | One concern per branch | Branch `<type>/<scope>-<short-desc>` (e.g. `feat/rewards-shapley`) off `main`. No repo-wide sweeps, no drive-by refactors, no unrelated fixes in the same branch. |
 | Commits | Conventional Commits with a mandatory scope: `type(scope): subject`. Types: `feat fix docs refactor test chore ci build perf`. Several scoped commits per branch are fine. Enforced by the commit-msg hook. |
-| Pull requests | `git push -u origin <branch>` then `gh pr create` using `.github/PULL_REQUEST_TEMPLATE.md`. The agent NEVER merges a PR, NEVER pushes to `main`, NEVER force-pushes. The user reviews and merges manually. |
+| Pull requests | `git push -u origin <branch>` then `gh pr create` using `.github/PULL_REQUEST_TEMPLATE.md`. The agent NEVER merges a PR, NEVER pushes to `main` (not even a "test" push: GitHub accepts a push of a mergeable PR head and marks the PR merged), NEVER force-pushes. The user reviews and merges manually. |
 | Hooks | Never `--no-verify`, never skip or disable a hook, never edit `.git/hooks`. Before opening a PR: `uv run pre-commit run --all-files && uv run pytest`. |
 | Suppressions | `# noqa: RULE  # reason: ...` and `# ty: ignore[rule]  # reason: ...` ONLY with explicit user authorization in the current conversation. Same for any change to `[tool.ruff]` / `[tool.ty]` rules. Bare `# noqa` / `# ty: ignore` / `# type: ignore` are rejected by the hooks. |
 | uv only | `uv add` / `uv add --group dev` / `uv remove`; never pip. Commit `uv.lock` with the change (the `uv-lock` hook checks it). `uv sync` installs the `dev` and `gpu` groups by default. |
@@ -34,7 +34,7 @@ Hydra config under `conf/`.
 | `conf/` | Hydra root `config.yaml` + group `env/` |
 | `tests/` | pytest, CPU only; `conftest.py` forces `JAX_PLATFORMS=cpu` |
 | `third_party/MA-Craftax` | submodule → `AdrienBolling/MA-Craftax` (fork of BaselOmari/MA-Craftax, MIT); uv workspace member, editable dep `ma-craftax` |
-| `.pre-commit-config.yaml` | hygiene, uv-lock, ruff, ty (`uv check --frozen`), conventional commits, pytest on pre-push |
+| `.pre-commit-config.yaml` | hygiene, uv-lock, ruff, ty (`uv check --frozen`), conventional commits; on pre-push: `scripts/block_main_push.sh` (refuses pushes to `main`) then pytest |
 | `.github/workflows/ci.yml` | job `ci`: ruff check/format, ty, pytest (CPU, `UV_NO_GROUP=gpu`); required by branch protection |
 | `.dvc/` | DVC config; default remote `store` (ssh), local override in untracked `config.local` |
 | `outputs/`, `multirun/` | Hydra run dirs (ignored); `checkpoint_dir` = `${hydra:runtime.output_dir}/checkpoints` |
@@ -46,7 +46,7 @@ Hydra config under `conf/`.
 | Bootstrap | `chore/bootstrap` PR: standards, env, hydra runner, CI |
 | Env | MA-Craftax fork packaged (hatchling `dev-mode-dirs`), MA + Coop run on GPU, smoke test on CPU (~20 s) |
 | Algorithms | none yet |
-| Branch protection | enabled once the `ci` check exists on the bootstrap PR |
+| Branch protection | on: PR + green `ci` required, linear history, no force-push/deletion, enforce_admins. Server side cannot block a push of a mergeable PR head; the local pre-push guard does |
 
 ## Key decisions
 

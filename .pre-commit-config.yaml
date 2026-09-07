@@ -48,6 +48,13 @@ repos:
 
   - repo: local
     hooks:
+      - id: block-main-push
+        name: refuse pushes to main
+        entry: scripts/block_main_push.sh
+        language: script
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
       - id: pytest
         name: pytest (pre-push, CPU)
         entry: uv run --frozen pytest -q
