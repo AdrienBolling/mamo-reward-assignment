@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAX_PLATFORMS: cpu
+  UV_NO_GROUP: gpu # CPU-only runners: skip the jax[cuda12] dependency group
+
+jobs:
+  # Job id `ci` is the status-check context required by branch protection on main.
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive # third_party/MA-Craftax (public fork, no token needed)
+      - uses: astral-sh/setup-uv@v10
+        with:
+          version: "0.12.9" # keep equal to the uv-pre-commit rev
+          enable-cache: true
+      - run: uv python install # reads .python-version
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run ty check
+      - run: uv run pytest -q
