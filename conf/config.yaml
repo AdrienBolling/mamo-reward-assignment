@@ -1,0 +1,28 @@
+# Root Hydra config. Every run parameter lives here or in a config group.
+#   uv run mamora-run                                   # default env, random rollout
+#   uv run mamora-run env=craftax_coop_symbolic seed=3  # override group / value
+#   uv run mamora-run dry_run=true                      # compose + print + exit
+defaults:
+  - env: craftax_ma_symbolic
+  - _self_
+
+seed: 0
+# Compose and print the configuration, then exit without any computation.
+dry_run: false
+
+rollout:
+  num_envs: 4
+  steps: 64
+
+# Every run is self-contained: artefacts go under this run's Hydra output dir.
+checkpoint_dir: ${hydra:runtime.output_dir}/checkpoints
+
+hydra:
+  job:
+    # Stay in the repo root: relative paths and the editable install assume it.
+    chdir: false
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  sweep:
+    dir: multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
