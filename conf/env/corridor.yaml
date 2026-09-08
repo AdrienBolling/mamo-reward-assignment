@@ -1,0 +1,12 @@
+# Timescale corridor (design_docs/03, section 17): harvest pays dense reward,
+# invest_steps consecutive invests pay the sparse milestone, commit_steps
+# consecutive commits after the milestone pay the final reward and end the episode.
+name: TimescaleCorridor
+params:
+  invest_steps: 5
+  commit_steps: 3
+  horizon: 32
+  harvest_reward: 0.1
+  invest_reward: 0.0
+  milestone_reward: 1.0
+  final_reward: 10.0
