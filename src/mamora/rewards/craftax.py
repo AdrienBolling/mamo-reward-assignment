@@ -31,13 +31,11 @@ from typing import Any, Literal
 import jax
 import jax.numpy as jnp
 
+from mamora.envs.base import EnvState
 from mamora.envs.factory import CraftaxEnv
 from mamora.rewards.channels import RewardChannels
 
 CraftaxFamily = Literal["ma", "coop"]
-
-# MA-Craftax `EnvState` is a flax struct dataclass from an untyped package.
-type EnvState = Any
 
 HEALTH_REWARD_SCALE = 0.1
 
@@ -97,7 +95,16 @@ class CraftaxChannelEnv:
         done = dones["__all__"]
         state_next = jax.tree.map(lambda a, b: jax.lax.select(done, a, b), state_reset, state_step)
         obs = jax.tree.map(lambda a, b: jax.lax.select(done, a, b), obs_reset, obs_step)
-        return obs, state_next, rewards, dones, {**info, "reward_channels": channels}
+        info = {
+            **info,
+            "reward_channels": channels,
+            "episode_stats": self.episode_stats(state_step),
+        }
+        return obs, state_next, rewards, dones, info
+
+    def episode_stats(self, state: EnvState) -> dict[str, jax.Array]:
+        """Per-agent (num_agents,) count of achievements unlocked so far."""
+        return {"achievements": state.achievements.sum(axis=-1).astype(jnp.float32)}
 
     def channels(self, prev_state: EnvState, next_state: EnvState) -> RewardChannels:
         """Reward channels of the transition `prev_state -> next_state` (no reset)."""

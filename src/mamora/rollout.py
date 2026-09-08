@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 import jax
 import jax.numpy as jnp
 
+from mamora.envs.base import ChannelEnv, EnvState
 from mamora.rewards.channels import RewardChannels
-from mamora.rewards.craftax import CraftaxChannelEnv
-
-# MA-Craftax `EnvState` is a flax struct dataclass from an untyped package.
-type EnvState = Any
 
 
 class RolloutStats(NamedTuple):
@@ -19,12 +16,10 @@ class RolloutStats(NamedTuple):
 
     returns: jax.Array  # (num_agents,) sum of scalar rewards over the rollout
     channel_returns: RewardChannels  # each (num_agents,) sum of that channel
-    achievements: jax.Array  # (num_agents,) achievements unlocked at the end
+    episode_stats: dict[str, jax.Array]  # each (num_agents,) env indicator at the end
 
 
-def random_rollout(
-    env: CraftaxChannelEnv, key: jax.Array, *, num_envs: int, steps: int
-) -> RolloutStats:
+def random_rollout(env: ChannelEnv, key: jax.Array, *, num_envs: int, steps: int) -> RolloutStats:
     """Run `steps` uniform-random steps in `num_envs` parallel copies of `env`."""
     agents = tuple(env.agents)
     num_actions = int(env.action_space(agents[0]).n)
@@ -58,7 +53,9 @@ def random_rollout(
         return RolloutStats(
             returns=rewards.sum(axis=0).mean(axis=-1),
             channel_returns=jax.tree.map(lambda c: c.sum(axis=0).mean(axis=0), channels),
-            achievements=state.achievements.sum(axis=-1).mean(axis=0),
+            episode_stats=jax.tree.map(
+                lambda s: s.mean(axis=0), jax.vmap(env.episode_stats)(state)
+            ),
         )
 
     return run(key)

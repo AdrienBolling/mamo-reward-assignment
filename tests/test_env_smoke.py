@@ -14,8 +14,10 @@ def ma_env():
 
 
 def test_unknown_env_name_is_rejected():
-    with pytest.raises(ValueError, match="Unknown environment"):
+    with pytest.raises(ValueError, match="Unknown MA-Craftax environment"):
         make_env("Craftax-Nope")
+    with pytest.raises(ValueError, match="Unknown environment"):
+        make_channel_env("Craftax-Nope")
 
 
 def test_env_names_are_exposed():
@@ -41,6 +43,6 @@ def test_random_rollout_runs():
     env = make_channel_env("Craftax-MA-Symbolic")
     stats = random_rollout(env, jax.random.PRNGKey(0), num_envs=2, steps=3)
     assert stats.returns.shape == (env.num_agents,)
-    assert stats.achievements.shape == (env.num_agents,)
+    assert stats.episode_stats["achievements"].shape == (env.num_agents,)
     assert stats.channel_returns.stack().shape == (3, env.num_agents)
     assert jnp.allclose(stats.channel_returns.total(), stats.returns, atol=1e-5)
