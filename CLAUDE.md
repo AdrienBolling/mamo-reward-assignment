@@ -43,7 +43,7 @@ Hydra config under `conf/`.
 
 | Area | State |
 |---|---|
-| Bootstrap | `chore/bootstrap` PR: standards, env, hydra runner, CI |
+| Bootstrap | on `main` (PR #1, landed by an accidental direct push on 2026-09-07; user chose to keep it and review post hoc) |
 | Env | MA-Craftax fork packaged (hatchling `dev-mode-dirs`), MA + Coop run on GPU, smoke test on CPU (~20 s) |
 | Algorithms | none yet |
 | Branch protection | on: PR + green `ci` required, linear history, no force-push/deletion, enforce_admins. Server side cannot block a push of a mergeable PR head; the local pre-push guard does |
@@ -71,7 +71,7 @@ Hydra config under `conf/`.
 
 ## Next steps
 
-1. User merges `chore/bootstrap`.
+1. User merges PR #2 (pre-push guard against pushes to `main`).
 2. `feat(rewards)`: multi-objective (per-achievement vector) reward wrapper around the env step.
 3. `feat(algos)`: IPPO baseline port from `third_party/MA-Craftax/baselines/` behind Hydra config.
 4. `feat(logging)`: wandb toggle in `conf/`.
