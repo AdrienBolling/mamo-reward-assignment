@@ -56,7 +56,7 @@ addopts = "-ra --strict-markers"
 
 # ---------------------------------------------------------------------------
 # ruff: lint + format. Rule changes and inline `# noqa` need explicit user
-# authorization (see CLAUDE.md). Accepted form: `# noqa: RULE  # reason: ...`.
+# authorization. Accepted form: `# noqa: RULE  # reason: ...`.
 # ---------------------------------------------------------------------------
 [tool.ruff]
 line-length = 100
