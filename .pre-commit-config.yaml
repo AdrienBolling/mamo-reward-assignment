@@ -1,4 +1,4 @@
-# Enforcement chain for this repo (see CLAUDE.md "Workflow rules").
+# Enforcement chain for this repo.
 #   uv run pre-commit install          # installs pre-commit + commit-msg + pre-push hooks
 #   uv run pre-commit run --all-files  # what CI runs, minus pytest
 # Never bypass with --no-verify.
@@ -43,7 +43,7 @@ repos:
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]
-        # `type(scope): subject`, scope mandatory. Types mirror CLAUDE.md.
+        # `type(scope): subject`, scope mandatory.
         args: [--force-scope, feat, fix, docs, refactor, test, chore, ci, build, perf]
 
   - repo: local

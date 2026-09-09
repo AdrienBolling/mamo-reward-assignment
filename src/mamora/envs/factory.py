@@ -9,9 +9,12 @@ thing imported from the `craftax.` namespace is this factory.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from craftax.craftax_env import make_craftax_env_from_name
+
+if TYPE_CHECKING:
+    from mamora.rewards.craftax import CraftaxChannelEnv
 
 # MA-Craftax envs are untyped; they implement the jaxmarl `MultiAgentEnv` interface.
 type CraftaxEnv = Any
@@ -30,3 +33,11 @@ def make_env(name: str) -> CraftaxEnv:
         msg = f"Unknown environment {name!r}; expected one of {ENV_NAMES}"
         raise ValueError(msg)
     return make_craftax_env_from_name(name)
+
+
+def make_channel_env(name: str) -> CraftaxChannelEnv:
+    """Build an MA-Craftax environment that also reports reward channels."""
+    # Imported here: `mamora.rewards.craftax` imports this module.
+    from mamora.rewards.craftax import CraftaxChannelEnv, craftax_family
+
+    return CraftaxChannelEnv(make_env(name), craftax_family(name))

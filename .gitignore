@@ -230,3 +230,7 @@ wandb/
 checkpoints/
 runs/
 reports/
+
+# Claude Code project memory stays local (never pushed to the remote)
+/CLAUDE.md
+/CLAUDE-Archive.md
