@@ -25,12 +25,19 @@ EPS = 1e-8
 
 
 def tree_dot(a: PyTree, b: PyTree) -> jax.Array:
-    """Inner product of two pytrees with the same structure."""
-    leaves_a = jax.tree.leaves(a)
-    leaves_b = jax.tree.leaves(b)
-    if len(leaves_a) != len(leaves_b):
-        msg = f"pytrees have {len(leaves_a)} and {len(leaves_b)} leaves"
+    """Inner product of two pytrees with the same structure and leaf shapes."""
+    leaves_a, structure_a = jax.tree.flatten(a)
+    leaves_b, structure_b = jax.tree.flatten(b)
+    if structure_a != structure_b:
+        msg = f"pytrees have different structures: {structure_a} != {structure_b}"
         raise ValueError(msg)
+    for path_leaf, x, y in zip(
+        jax.tree_util.tree_leaves_with_path(a), leaves_a, leaves_b, strict=True
+    ):
+        if jnp.shape(x) != jnp.shape(y):
+            path = "/".join(_key_name(entry) for entry in path_leaf[0])
+            msg = f"leaf {path!r} has shapes {jnp.shape(x)} and {jnp.shape(y)}"
+            raise ValueError(msg)
     partial_dots = [jnp.vdot(x, y) for x, y in zip(leaves_a, leaves_b, strict=True)]
     return jnp.sum(jnp.stack(partial_dots)) if partial_dots else jnp.asarray(0.0)
 

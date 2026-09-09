@@ -42,8 +42,21 @@ def test_tree_dot_and_norm_match_flat(grads):
 
 
 def test_tree_dot_rejects_mismatched_trees(grads):
-    with pytest.raises(ValueError, match="leaves"):
+    with pytest.raises(ValueError, match="structures"):
         tree_dot(grads[0], {"only": jnp.ones(3)})
+
+
+def test_tree_dot_rejects_same_leaf_count_different_keys(grads):
+    renamed = {"encoder": grads[0]["encoder"], "head": grads[0]["head"], "other": grads[0]["gate"]}
+    with pytest.raises(ValueError, match="structures"):
+        tree_dot(grads[0], renamed)
+
+
+def test_tree_dot_rejects_same_size_different_shape(grads):
+    reshaped = jax.tree.map(lambda x: x, grads[0])
+    reshaped["encoder"]["kernel"] = reshaped["encoder"]["kernel"].reshape(3, 4)
+    with pytest.raises(ValueError, match="encoder/kernel"):
+        tree_dot(grads[0], reshaped)
 
 
 def test_gram_matches_flat_and_is_symmetric(grads):
