@@ -3,27 +3,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import hydra
 import jax
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
+from mamora.config import env_params
 from mamora.envs.factory import make_channel_env
 from mamora.paths import CONF_DIR
 from mamora.rollout import random_rollout
 
 log = logging.getLogger(__name__)
-
-
-def env_params(cfg: DictConfig) -> dict[str, Any]:
-    """The `env.params` mapping of the config as a plain dict (empty if absent)."""
-    params = OmegaConf.to_container(cfg.env.get("params", {}), resolve=True)
-    if not isinstance(params, dict):
-        msg = f"env.params must be a mapping, got {type(params).__name__}"
-        raise TypeError(msg)
-    return {str(k): v for k, v in params.items()}
 
 
 @hydra.main(config_path=str(CONF_DIR), config_name="config", version_base=None)
