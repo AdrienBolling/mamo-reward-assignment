@@ -626,12 +626,14 @@ name = "mamora"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "flax" },
     { name = "hydra-core" },
     { name = "jax" },
     { name = "jaxmarl" },
     { name = "ma-craftax" },
     { name = "numpy" },
     { name = "omegaconf" },
+    { name = "optax" },
 ]
 
 [package.dev-dependencies]
@@ -647,12 +649,14 @@ gpu = [
 
 [package.metadata]
 requires-dist = [
+    { name = "flax", specifier = ">=0.12.9" },
     { name = "hydra-core", specifier = ">=1.3.6" },
     { name = "jax", specifier = ">=0.11.1" },
     { name = "jaxmarl", git = "https://github.com/FLAIROx/JaxMARL?rev=b0c4d77b2cc06711031aec846a55ed0c8cf0f6e9" },
     { name = "ma-craftax", editable = "third_party/MA-Craftax" },
     { name = "numpy", specifier = ">=2.5.3" },
     { name = "omegaconf", specifier = ">=2.3.1" },
+    { name = "optax", specifier = ">=0.2.8" },
 ]
 
 [package.metadata.requires-dev]
