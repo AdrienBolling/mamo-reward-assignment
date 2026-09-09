@@ -22,4 +22,3 @@ uv run pytest                                                    # CPU tests
 ```
 
 Runs are configured with Hydra (`conf/`), outputs land under `outputs/<date>/<time>/`.
-Development rules live in `CLAUDE.md`.
