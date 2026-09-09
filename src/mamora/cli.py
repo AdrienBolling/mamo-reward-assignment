@@ -42,9 +42,9 @@ def main(cfg: DictConfig) -> None:
     )
     returns = np.asarray(stats.returns)
     channels = np.asarray(stats.channel_returns.stack())  # (channel, agent)
-    episode_stats = {k: np.asarray(v) for k, v in stats.episode_stats.items()}
+    peak_stats = {k: np.asarray(v) for k, v in stats.peak_stats.items()}
     for i, agent in enumerate(env.agents):
-        extra = ", ".join(f"{k} {v[i]:.2f}" for k, v in episode_stats.items())
+        extra = ", ".join(f"peak {k} {v[i]:.2f}" for k, v in peak_stats.items())
         log.info(
             "%s: mean return %.3f (dense %.3f, sparse %.3f, final %.3f), %s",
             agent,

@@ -87,5 +87,17 @@ def test_factory_builds_corridor_from_params():
 def test_random_rollout_on_corridor(env):
     stats = random_rollout(env, jax.random.PRNGKey(0), num_envs=4, steps=PARAMS.horizon)
     assert stats.returns.shape == (1,)
-    assert set(stats.episode_stats) == {"milestone", "success"}
+    assert set(stats.peak_stats) == {"milestone", "success"}
     assert jnp.allclose(stats.channel_returns.total(), stats.returns, atol=1e-5)
+
+
+def test_rollout_keeps_pre_reset_stats():
+    # One invest then one commit succeeds, so random play over 64 envs reaches
+    # success; the peak must survive the auto-reset that follows it.
+    env = TimescaleCorridor(CorridorParams(invest_steps=1, commit_steps=1, horizon=4))
+    stats = random_rollout(env, jax.random.PRNGKey(0), num_envs=64, steps=8)
+    success = float(stats.peak_stats["success"][0])
+    milestone = float(stats.peak_stats["milestone"][0])
+    assert 0.0 < success <= 1.0
+    assert milestone >= success
+    assert float(stats.channel_returns.final[0]) > 0.0

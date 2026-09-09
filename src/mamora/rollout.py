@@ -16,7 +16,9 @@ class RolloutStats(NamedTuple):
 
     returns: jax.Array  # (num_agents,) sum of scalar rewards over the rollout
     channel_returns: RewardChannels  # each (num_agents,) sum of that channel
-    episode_stats: dict[str, jax.Array]  # each (num_agents,) env indicator at the end
+    # Each (num_agents,): peak value of the env indicator over the rollout steps
+    # (pre-reset, from info["episode_stats"]), averaged over the environments.
+    peak_stats: dict[str, jax.Array]
 
 
 def random_rollout(env: ChannelEnv, key: jax.Array, *, num_envs: int, steps: int) -> RolloutStats:
@@ -33,29 +35,30 @@ def random_rollout(env: ChannelEnv, key: jax.Array, *, num_envs: int, steps: int
 
     def step(
         carry: tuple[EnvState, jax.Array], _: None
-    ) -> tuple[tuple[EnvState, jax.Array], tuple[jax.Array, RewardChannels]]:
+    ) -> tuple[tuple[EnvState, jax.Array], tuple[jax.Array, RewardChannels, dict[str, jax.Array]]]:
         state, key = carry
         key, k_act, k_step = jax.random.split(key, 3)
         step_keys = jax.random.split(k_step, num_envs)
         _obs, state, rewards, _dones, info = jax.vmap(env.step)(
             step_keys, state, sample_actions(k_act)
         )
-        # (num_agents, num_envs); channels are (num_envs, num_agents) each
+        # (num_agents, num_envs); channels and stats are (num_envs, num_agents) each.
+        # The stats come from the pre-reset state of this step (see ChannelEnv).
         scalar = jnp.stack([rewards[agent] for agent in agents])
-        return (state, key), (scalar, info["reward_channels"])
+        return (state, key), (scalar, info["reward_channels"], info["episode_stats"])
 
     @jax.jit
     def run(key: jax.Array) -> RolloutStats:
         k_reset, k_run = jax.random.split(key)
         _obs, state = jax.vmap(env.reset)(jax.random.split(k_reset, num_envs))
-        (state, _), (rewards, channels) = jax.lax.scan(step, (state, k_run), None, length=steps)
-        # rewards: (steps, num_agents, num_envs); channels: (steps, num_envs, num_agents)
+        (_state, _), (rewards, channels, stats) = jax.lax.scan(
+            step, (state, k_run), None, length=steps
+        )
+        # rewards: (steps, num_agents, num_envs); channels, stats: (steps, num_envs, num_agents)
         return RolloutStats(
             returns=rewards.sum(axis=0).mean(axis=-1),
             channel_returns=jax.tree.map(lambda c: c.sum(axis=0).mean(axis=0), channels),
-            episode_stats=jax.tree.map(
-                lambda s: s.mean(axis=0), jax.vmap(env.episode_stats)(state)
-            ),
+            peak_stats=jax.tree.map(lambda s: s.max(axis=0).mean(axis=0), stats),
         )
 
     return run(key)
