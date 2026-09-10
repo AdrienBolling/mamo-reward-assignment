@@ -43,18 +43,15 @@ def make_env(name: str) -> CraftaxEnv:
 def make_channel_env(name: str, params: Mapping[str, Any] | None = None) -> ChannelEnv:
     """Build an environment that reports reward channels.
 
-    `params` are the keyword arguments of the environment's parameter class
-    (only the corridor has one); they come from the `env` config group.
+    `params` come from the `env` config group: the fields of `CorridorParams`
+    for the corridor, the keyword arguments of `CraftaxChannelEnv` for MA-Craftax.
     """
     if name == CORRIDOR_ENV_NAME:
         return TimescaleCorridor(CorridorParams(**dict(params or {})))
     if name not in CRAFTAX_ENV_NAMES:
         msg = f"Unknown environment {name!r}; expected one of {ENV_NAMES}"
         raise ValueError(msg)
-    if params:
-        msg = f"{name} takes no parameters, got {sorted(params)}"
-        raise ValueError(msg)
     # Imported here: `mamora.rewards.craftax` imports this module.
     from mamora.rewards.craftax import CraftaxChannelEnv, craftax_family
 
-    return CraftaxChannelEnv(make_env(name), craftax_family(name))
+    return CraftaxChannelEnv(make_env(name), craftax_family(name), **dict(params or {}))

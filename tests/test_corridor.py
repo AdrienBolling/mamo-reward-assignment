@@ -80,7 +80,7 @@ def test_factory_builds_corridor_from_params():
     assert isinstance(env, TimescaleCorridor)
     assert env.params.invest_steps == 2
     assert env.params.commit_steps == CorridorParams().commit_steps
-    with pytest.raises(ValueError, match="takes no parameters"):
+    with pytest.raises(TypeError, match="horizon"):
         make_channel_env("Craftax-MA-Symbolic", {"horizon": 5})
 
 
