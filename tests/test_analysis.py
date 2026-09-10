@@ -92,6 +92,26 @@ def test_analyze_writes_summary_and_figures(sweep):
     assert float(tempted["success@last3"]) == 0.0
 
 
+def test_analyze_handles_all_nan_series_and_stale_figures(sweep):
+    # A metric with no finite value (no episode finished) must not abort the plots.
+    for path in sweep.rglob("metrics.jsonl"):
+        if not path.read_text():
+            continue
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        for row in rows:
+            row["episode/return"] = float("nan")
+        path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    out = analyze(sweep, first=5, last=3)
+    assert (out / "curves_learning.png").exists()
+    # A summary-only rerun (too many groups) removes the previous figures.
+    stale = out / "curves_learning.png"
+    analyze(sweep, group_keys=["env.params.harvest_reward", "seed"], out=out)
+    assert stale.exists()  # 4 groups: figures are redrawn
+    (out / "curves_bogus.png").write_text("old")
+    analyze(sweep, out=out)
+    assert not (out / "curves_bogus.png").exists()
+
+
 def test_analyze_rejects_empty_filter(sweep):
     with pytest.raises(ValueError, match="matches"):
         analyze(sweep, filters=["env.params.harvest_reward=9"])

@@ -297,6 +297,8 @@ def plot_panels(
                 low = np.nanmin(stacked, axis=0)
                 high = np.nanmax(stacked, axis=0)
             valid = np.isfinite(mean)
+            if not valid.any():
+                continue  # no finished episode in any iteration: nothing to draw
             x = np.arange(len(mean))[valid]
             ax.plot(x, _smooth(mean[valid], smooth), color=color, linewidth=2, label=group.name)
             ax.fill_between(
@@ -313,7 +315,7 @@ def plot_panels(
             ax.set_yscale("log")
         ax.grid(color="#e6e5e1", linewidth=0.8)
         ax.spines[["top", "right"]].set_visible(False)
-    if len(groups) > 1:
+    if len(groups) > 1 and axes[0][0].get_legend_handles_labels()[0]:
         axes[0][0].legend(fontsize=8, frameon=False)
     fig.tight_layout()
     path = out / f"curves_{name}.png"
@@ -342,6 +344,8 @@ def analyze(
     groups = group_runs(runs, group_keys)
     out = out or root / "analysis"
     out.mkdir(parents=True, exist_ok=True)
+    for stale in out.glob("curves_*.png"):  # never leave figures of a previous analysis
+        stale.unlink()
     columns, rows = summarize(groups, first=first, last=last, threshold=threshold)
     write_summary(rows, columns, out)
     if len(groups) > len(PALETTE):
