@@ -29,7 +29,8 @@ class Encoder(nn.Module):
     @nn.compact
     def __call__(self, obs: jax.Array) -> jax.Array:
         act = ACTIVATIONS[self.activation]
-        x = obs
+        # One feature vector per observation, whatever its shape (pixels included).
+        x = obs.reshape((obs.shape[0], -1))
         for _ in range(self.num_layers):
             x = act(nn.Dense(self.hidden_size, kernel_init=nn.initializers.orthogonal(2**0.5))(x))
         return x

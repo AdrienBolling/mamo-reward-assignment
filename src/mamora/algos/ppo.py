@@ -136,8 +136,18 @@ class PPO:
         )
         total_updates = run.num_iterations * cfg.update_epochs * cfg.num_minibatches
         schedule = optax.linear_schedule(cfg.lr, 0.0, total_updates) if cfg.anneal_lr else cfg.lr
-        self.optimizer = optax.chain(
-            optax.clip_by_global_norm(cfg.max_grad_norm), optax.adam(schedule, eps=1e-5)
+        # The auxiliary channel critic is optimized apart from the PPO parameters
+        # (own clipping), so its gradient can never rescale the policy update.
+        self.optimizer = optax.multi_transform(
+            {
+                "ppo": optax.chain(
+                    optax.clip_by_global_norm(cfg.max_grad_norm), optax.adam(schedule, eps=1e-5)
+                ),
+                "aux": optax.chain(
+                    optax.clip_by_global_norm(cfg.max_grad_norm), optax.adam(schedule, eps=1e-5)
+                ),
+            },
+            _param_labels,
         )
         self.iteration = jax.jit(self._iteration)
 
@@ -331,19 +341,23 @@ class PPO:
             (params, opt_state), aux = jax.lax.scan(minibatch, (params, opt_state), minibatches)
             return (params, opt_state, key), jax.tree.map(lambda x: x.mean(), aux)
 
-        first_minibatch = jax.tree.map(lambda x: x[: n // cfg.num_minibatches], flat)
+        # Forensics use one uniformly sampled minibatch, like the update does; the
+        # flattened rollout is time-major, so a plain slice would be biased.
+        key, k_forensics = jax.random.split(runner.key)
+        sample = jax.random.permutation(k_forensics, n)[: n // cfg.num_minibatches]
+        forensics_minibatch = jax.tree.map(lambda x: x[sample], flat)
         nan_forensics = jax.tree.map(
             lambda s: jnp.full(s.shape, jnp.nan, s.dtype),
-            jax.eval_shape(self._forensics, runner.params, first_minibatch),
+            jax.eval_shape(self._forensics, runner.params, forensics_minibatch),
         )
         forensics = jax.lax.cond(
             iteration % run.forensics_every == 0,
-            lambda: self._forensics(runner.params, first_minibatch),
+            lambda: self._forensics(runner.params, forensics_minibatch),
             lambda: nan_forensics,
         )
 
         (params, opt_state, key), aux = jax.lax.scan(
-            epoch, (runner.params, runner.opt_state, runner.key), None, length=cfg.update_epochs
+            epoch, (runner.params, runner.opt_state, key), None, length=cfg.update_epochs
         )
         metrics = {
             **jax.tree.map(lambda x: x.mean(), aux),
@@ -353,6 +367,15 @@ class PPO:
         }
         runner = runner._replace(params=params, opt_state=opt_state, key=key)
         return runner, metrics
+
+
+def _param_labels(params: PyTree) -> PyTree:
+    """Optimizer partition: the channel critic is `aux`, everything else `ppo`."""
+    return {
+        "params": {
+            module: "aux" if module == "channel_critic" else "ppo" for module in params["params"]
+        }
+    }
 
 
 def _per_agent(

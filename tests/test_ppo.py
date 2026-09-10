@@ -1,5 +1,5 @@
 import math
-from typing import cast
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -41,11 +41,15 @@ def corridor_ppo():
     return PPO(env, PPOConfig(hidden_size=16), RunConfig(num_envs=4, num_steps=8, num_iterations=2))
 
 
-def test_network_outputs_and_modules():
+@pytest.mark.parametrize("obs_shape", [(4,), (3, 3, 2)])
+def test_network_outputs_and_modules(obs_shape):
+    """Vector and pixel-like observations both give one action distribution per row."""
     net = ActorCritic(num_actions=5, num_channels=NUM_CHANNELS, hidden_size=8)
-    params = net.init(jax.random.PRNGKey(0), jnp.zeros((2, 4)))
-    out = cast(tuple[jax.Array, jax.Array, jax.Array], net.apply(params, jnp.zeros((2, 4))))
-    logits, value, channel_values = out
+    obs = jnp.zeros((2, *obs_shape))
+    params = net.init(jax.random.PRNGKey(0), obs)
+    logits, value, channel_values = cast(
+        tuple[jax.Array, jax.Array, jax.Array], net.apply(params, obs)
+    )
     assert logits.shape == (2, 5)
     assert value.shape == (2,)
     assert channel_values.shape == (2, NUM_CHANNELS)
@@ -70,6 +74,47 @@ def test_gradient_routing(corridor_ppo):
     assert float(tree_norm(policy_grads["encoder"])) > 0.0
     assert float(tree_norm(policy_grads["critic"])) == 0.0
     assert float(tree_norm(policy_grads["channel_critic"])) == 0.0
+
+
+def test_channel_critic_never_changes_the_ppo_update():
+    """Codex P1: a huge auxiliary loss must leave encoder, actor and critic updates identical."""
+    env = TimescaleCorridor(CorridorParams(invest_steps=3, commit_steps=2, horizon=16))
+    run = RunConfig(num_envs=4, num_steps=8, num_iterations=2)
+    updated = {}
+    for coef in (0.0, 1e6):
+        ppo = PPO(env, PPOConfig(hidden_size=16, channel_vf_coef=coef), run)
+        params, batch = _params_and_batch(ppo, jax.random.PRNGKey(3))
+        batch = batch._replace(channel_target=batch.channel_target + 1e3)  # large aux error
+        opt_state = ppo.optimizer.init(params)
+        _loss, grads = jax.value_and_grad(ppo._loss, has_aux=True)(params, batch)
+        updates, _ = ppo.optimizer.update(grads, opt_state, params)
+        updated[coef] = jax.tree.map(np.asarray, cast(dict[str, Any], updates)["params"])
+    for module in ("encoder", "actor", "critic"):
+        for leaf_a, leaf_b in zip(
+            jax.tree.leaves(updated[0.0][module]),
+            jax.tree.leaves(updated[1e6][module]),
+            strict=True,
+        ):
+            assert np.array_equal(leaf_a, leaf_b)
+    assert float(tree_norm(updated[1e6]["channel_critic"])) > 0.0
+
+
+def test_forensics_minibatch_is_sampled_over_time(corridor_ppo):
+    """Codex P1: the forensics batch must not be the first timesteps of every env."""
+    ppo = corridor_ppo
+    seen: dict[str, jax.Array] = {}
+    original = ppo._forensics
+
+    def spy(params, batch):
+        seen["obs"] = batch.obs
+        return original(params, batch)
+
+    ppo._forensics = spy
+    runner = ppo.init(jax.random.PRNGKey(0))
+    ppo._iteration(runner, jnp.asarray(0))
+    # obs[..., 3] is timestep / horizon: the 8 rollout steps give 8 distinct values.
+    steps = np.unique(np.round(np.asarray(seen["obs"][:, 3]) * 16))
+    assert len(steps) > 2
 
 
 def test_forensics_metrics_are_finite(corridor_ppo):
