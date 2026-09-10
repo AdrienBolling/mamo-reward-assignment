@@ -1,2 +1,10 @@
 # Craftax-MA: exact Craftax mechanics, homogeneous agents (2 by default).
 name: Craftax-MA-Symbolic
+params:
+  # Wrapper episode limit (upstream: 100000). Reaching it is the "timeout" outcome.
+  max_episode_steps: 10000
+  # Final channel: paid once on the terminal step, death < timeout < boss.
+  final_reward:
+    death: -1.0
+    timeout: 0.0
+    boss: 10.0
