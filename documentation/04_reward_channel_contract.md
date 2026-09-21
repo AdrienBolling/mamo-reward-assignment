@@ -53,8 +53,18 @@ An environment implements `ChannelEnv`:
 - `reset(key)` returns the observations and the state.
 - `step(key, state, actions)` returns a `StepOutput`.
 
-The environment resets itself when the episode ends. The reward of that step
-belongs to the episode that ended. `episode_done` marks that step.
+The environment resets itself when the episode ends. On that step:
+
+1. `reward`, `done` and `episode_done` describe the transition that ended the
+   episode.
+2. `obs` and `state` already belong to the new episode. The caller acts on them
+   with no special case.
+3. `final_obs` holds the observation of the terminal state. Outside an
+   auto-reset step, `final_obs` equals `obs`.
+
+Use `final_obs`, and never `obs`, to bootstrap the value of the episode that
+ended. An agent that reads `obs` on that step computes the action of one episode
+from the state of another.
 
 ## 5. Rules for a split
 

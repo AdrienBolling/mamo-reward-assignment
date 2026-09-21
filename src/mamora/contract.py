@@ -181,11 +181,18 @@ class StepOutput(NamedTuple):
     """What every environment returns from one step.
 
     Attributes:
-        obs: Observations, with shape ``(num_agents, ...)``.
-        state: The next environment state.
-        reward: Channel rewards, with shape ``(num_channels, num_agents)``.
-        done: Per-agent termination, with shape ``(num_agents,)``.
-        episode_done: True when the episode ended and the environment reset.
+        obs: The observations to act on next, with shape ``(num_agents, ...)``.
+            After an auto-reset, these belong to the new episode.
+        state: The state that goes with `obs`. After an auto-reset, this is the
+            state of the new episode.
+        reward: Channel rewards of the transition that just happened, with shape
+            ``(num_channels, num_agents)``.
+        done: Per-agent termination of that transition, shape ``(num_agents,)``.
+        episode_done: True on the step where the episode ended and the
+            environment reset itself.
+        final_obs: The observation of the state this step reached, before any
+            reset. It equals `obs` when `episode_done` is false. A learner needs
+            it to bootstrap the value of a truncated episode.
         info: Extra per-step quantities, for the record and the analysis.
     """
 
@@ -194,6 +201,7 @@ class StepOutput(NamedTuple):
     reward: jax.Array
     done: jax.Array
     episode_done: jax.Array
+    final_obs: jax.Array
     info: dict[str, Any]
 
 
@@ -201,9 +209,16 @@ class StepOutput(NamedTuple):
 class ChannelEnv(Protocol):
     """An environment that reports its reward as channels.
 
-    The environment resets itself when the episode ends. The reward and the
-    observation of that step belong to the episode that ended, not to the new
-    one. ``episode_done`` marks the step where this happens.
+    The environment resets itself when the episode ends. On that step:
+
+    - ``reward``, ``done`` and ``episode_done`` describe the transition that
+      ended the episode;
+    - ``obs`` and ``state`` already belong to the new episode, so the caller
+      acts on them without a special case;
+    - ``final_obs`` holds the observation of the terminal state.
+
+    The caller must use ``final_obs``, and not ``obs``, to bootstrap the value
+    of the episode that ended.
     """
 
     @property

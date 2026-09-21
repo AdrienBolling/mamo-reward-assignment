@@ -81,29 +81,70 @@ def test_check_rewards_reads_the_shape_only_and_runs_under_jit():
         check_rewards(spec, jnp.zeros((2, 2)), num_agents=2)
 
 
-class _OneStepEnv:
-    """The smallest environment that obeys the contract."""
+class _TwoStepEnv:
+    """The smallest environment that obeys the contract. An episode lasts two steps."""
 
     channel_spec = timescale_spec()
     num_agents = 2
+    horizon = 2
+
+    def _obs(self, count):
+        return jnp.full((self.num_agents,), count, dtype=jnp.float32)
 
     def reset(self, key):
-        return jnp.zeros((self.num_agents,)), jnp.int32(0)
+        return self._obs(0), jnp.int32(0)
 
     def step(self, key, state, actions):
-        reward = stack([jnp.ones(self.num_agents), jnp.zeros(self.num_agents)] * 2)[:3]
+        count = state + 1
+        episode_done = count >= self.horizon
+        final_obs = self._obs(count)
+        reward = stack(
+            [
+                jnp.ones((self.num_agents,)),
+                jnp.zeros((self.num_agents,)),
+                jnp.where(episode_done, 10.0, 0.0) * jnp.ones((self.num_agents,)),
+            ]
+        )
         return StepOutput(
-            obs=jnp.zeros((self.num_agents,)),
-            state=state + 1,
+            obs=jnp.where(episode_done, self._obs(0), final_obs),
+            state=jnp.where(episode_done, jnp.int32(0), count),
             reward=reward,
-            done=jnp.zeros((self.num_agents,), dtype=bool),
-            episode_done=jnp.bool_(False),
+            done=jnp.full((self.num_agents,), episode_done),
+            episode_done=episode_done,
+            final_obs=final_obs,
             info={},
         )
 
 
 def test_an_environment_that_follows_the_contract_satisfies_the_protocol():
-    env = _OneStepEnv()
+    env = _TwoStepEnv()
     assert isinstance(env, ChannelEnv)
-    out = env.step(jax.random.key(0), jnp.int32(0), jnp.zeros((2,), dtype=int))
+    _, state = env.reset(jax.random.key(0))
+    out = env.step(jax.random.key(1), state, jnp.zeros((2,), dtype=int))
     check_rewards(env.channel_spec, out.reward, env.num_agents)
+
+
+def test_a_step_inside_an_episode_reports_the_same_observation_twice():
+    env = _TwoStepEnv()
+    _, state = env.reset(jax.random.key(0))
+    out = env.step(jax.random.key(1), state, jnp.zeros((2,), dtype=int))
+    assert not bool(out.episode_done)
+    assert jnp.allclose(out.obs, out.final_obs)
+    assert jnp.allclose(out.obs, jnp.ones((2,)))
+
+
+def test_an_auto_reset_returns_the_new_observation_and_keeps_the_terminal_one():
+    env = _TwoStepEnv()
+    _, state = env.reset(jax.random.key(0))
+    _, state = env.step(jax.random.key(1), state, jnp.zeros((2,), dtype=int))[:2]
+    out = env.step(jax.random.key(2), state, jnp.zeros((2,), dtype=int))
+
+    assert bool(out.episode_done)
+    # the caller acts on the new episode, and never on the terminal observation
+    assert jnp.allclose(out.obs, jnp.zeros((2,)))
+    assert jnp.allclose(out.state, jnp.int32(0))
+    # the terminal observation stays available, for the value of the last step
+    assert jnp.allclose(out.final_obs, jnp.full((2,), 2.0))
+    # the reward belongs to the episode that ended
+    final = env.channel_spec.index("final")
+    assert jnp.allclose(out.reward[final], jnp.full((2,), 10.0))
