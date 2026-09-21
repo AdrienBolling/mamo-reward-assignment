@@ -1,18 +1,26 @@
 """The timescale corridor: a toy task where the three channels conflict by design.
 
-One agent, three actions, one corridor. Document 03, section 17, defines it:
+One agent, three actions, a fixed horizon. Document 03, section 17, defines
+the corridor. This version fixes the horizon, so the length of an episode does
+not depend on the policy and the dense return of a policy is the sum of what
+its actions pay.
 
-- ``harvest`` pays a dense reward at once and makes no progress.
-- ``invest`` pays little or nothing. After `invest_steps` consecutive invests
+- ``harvest`` pays `harvest_reward` at once and makes no progress.
+- ``invest`` pays `invest_reward`. After `invest_steps` consecutive invests
   the agent reaches the milestone, which pays the sparse reward once.
-- ``commit`` counts only after the milestone. After `commit_steps` consecutive
-  commits the episode ends with success and pays the final reward.
+- ``commit`` pays `commit_reward`. After `commit_steps` consecutive commits,
+  after the milestone, the episode is a success.
+- The episode ends at `horizon`. That last step pays the final reward if the
+  episode is a success, and nothing otherwise.
 
-Any other action resets the streak in progress. The episode truncates at
-`horizon` steps. The optimal return is the milestone plus the final reward when
-the harvest reward is small, and `horizon` times the harvest reward otherwise.
-The dense channel therefore pulls the policy away from the final channel by
-construction, which gives the diagnostics a known conflict to detect.
+Any other action breaks the streak in progress. Success costs the
+``invest_steps + commit_steps`` steps that do not harvest, and nothing else:
+when the sequence runs makes no difference to the return. The optimal return
+is ``(horizon - cost) * harvest_reward + milestone_reward + final_reward``
+when the milestone and the final reward are worth more than the harvests
+they replace, and ``horizon * harvest_reward`` otherwise. In the control
+where every action pays the same dense reward, the dense channel is
+indifferent to success, and the conflict disappears.
 
 The environment is one instance. The runner vectorizes it with ``jax.vmap``.
 """
@@ -54,11 +62,28 @@ class CorridorConfig:
     def __post_init__(self) -> None:
         if self.invest_steps < 1 or self.commit_steps < 1:
             raise ValueError("invest_steps and commit_steps must be at least 1")
-        shortest = self.invest_steps + self.commit_steps
-        if self.horizon < shortest:
+        if self.horizon < self.success_cost:
             raise ValueError(
-                f"horizon {self.horizon} is shorter than the {shortest} steps success needs"
+                f"horizon {self.horizon} is shorter than the {self.success_cost} steps success needs"
             )
+
+    @property
+    def success_cost(self) -> int:
+        """The steps a success takes away from harvesting."""
+        return self.invest_steps + self.commit_steps
+
+    @property
+    def optimal_return(self) -> float:
+        """The best scalar return: succeed once, and harvest every other step, or never succeed."""
+        harvest_all = self.horizon * self.harvest_reward
+        succeed = (
+            (self.horizon - self.success_cost) * self.harvest_reward
+            + self.invest_steps * self.invest_reward
+            + self.commit_steps * self.commit_reward
+            + self.milestone_reward
+            + self.final_reward
+        )
+        return max(harvest_all, succeed)
 
 
 class CorridorState(NamedTuple):
@@ -74,20 +99,26 @@ class CorridorState(NamedTuple):
     """True once the milestone is reached."""
 
     commit: jax.Array
-    """Consecutive commits so far, after the milestone."""
+    """Consecutive commits so far, after the milestone and before success."""
+
+    success: jax.Array
+    """True once the episode is a success."""
 
 
 class TimescaleCorridor:
     """The corridor as a :class:`~mamora.contract.ChannelEnv`.
 
-    The observation has four entries, each in ``[0, 1]``: invest progress,
-    milestone reached, commit progress, and time. It is the whole state, so the
-    task is fully observed and a memoryless policy can solve it.
+    The observation has five entries, each in ``[0, 1]``: invest progress,
+    milestone reached, commit progress, success, and time. It is the whole
+    state, so the task is fully observed and a memoryless policy can solve it.
+
+    ``info`` carries the ``milestone`` and ``success`` flags after the step.
+    On the last step of an episode they are its outcome.
     """
 
     num_agents = 1
     num_actions = NUM_ACTIONS
-    obs_size = 4
+    obs_size = 5
 
     def __init__(self, config: CorridorConfig | None = None) -> None:
         self.config = config if config is not None else CorridorConfig()
@@ -100,7 +131,8 @@ class TimescaleCorridor:
         """Start at the corridor entrance. The start is deterministic; `key` is unused."""
         del key
         zero = jnp.int32(0)
-        state = CorridorState(time=zero, invest=zero, milestone=jnp.bool_(False), commit=zero)
+        no = jnp.bool_(False)
+        state = CorridorState(time=zero, invest=zero, milestone=no, commit=zero, success=no)
         return self.observe(state), state
 
     def observe(self, state: CorridorState) -> jax.Array:
@@ -111,6 +143,7 @@ class TimescaleCorridor:
                 state.invest / cfg.invest_steps,
                 state.milestone.astype(jnp.float32),
                 state.commit / cfg.commit_steps,
+                state.success.astype(jnp.float32),
                 state.time / cfg.horizon,
             ]
         ).astype(jnp.float32)
@@ -130,22 +163,27 @@ class TimescaleCorridor:
         milestone = state.milestone | milestone_now
 
         # Progress after the milestone: a streak of commits, which starts the step after.
-        commit_streak = jnp.where(state.milestone & commit, state.commit + 1, 0)
-        success = state.milestone & (commit_streak >= cfg.commit_steps)
+        commit_streak = jnp.where(state.milestone & ~state.success & commit, state.commit + 1, 0)
+        success_now = state.milestone & ~state.success & (commit_streak >= cfg.commit_steps)
+        success = state.success | success_now
 
         time = state.time + 1
-        truncated = ~success & (time >= cfg.horizon)
-        episode_done = success | truncated
+        episode_done = time >= cfg.horizon
 
+        # The dense reward depends on the action alone, never on progress.
         dense = (
             harvest * cfg.harvest_reward + invest * cfg.invest_reward + commit * cfg.commit_reward
         )
         sparse = milestone_now * cfg.milestone_reward
-        final = success * cfg.final_reward
+        final = episode_done * success * cfg.final_reward
         reward = stack([jnp.reshape(r, (1,)).astype(jnp.float32) for r in (dense, sparse, final)])
 
         reached = CorridorState(
-            time=time, invest=invest_streak, milestone=milestone, commit=commit_streak
+            time=time,
+            invest=invest_streak,
+            milestone=milestone,
+            commit=commit_streak,
+            success=success,
         )
         final_obs = self.observe(reached)
         reset_obs, reset_state = self.reset(key)
@@ -160,5 +198,5 @@ class TimescaleCorridor:
             done=jnp.reshape(episode_done, (1,)),
             episode_done=episode_done,
             final_obs=final_obs,
-            info={"success": success, "milestone": milestone_now, "truncated": truncated},
+            info={"milestone": milestone, "success": success},
         )
