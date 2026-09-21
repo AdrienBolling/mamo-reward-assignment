@@ -4,7 +4,7 @@
 # Never bypass with --no-verify.
 default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit]
-exclude: ^third_party/
+exclude: ^paper/ # the article submodule has its own rules
 minimum_pre_commit_version: "4.0.0"
 
 repos:
@@ -13,6 +13,8 @@ repos:
     hooks:
       - id: end-of-file-fixer
       - id: trailing-whitespace
+        # keep the two-space line break markdown uses in the research documents
+        args: [--markdown-linebreak-ext=md]
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict

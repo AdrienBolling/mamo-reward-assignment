@@ -1,4 +1,3 @@
-[submodule "third_party/MA-Craftax"]
-	path = third_party/MA-Craftax
-	url = https://github.com/AdrienBolling/MA-Craftax.git
-	branch = main
+[submodule "paper"]
+	path = paper
+	url = git@github.com:AdrienBolling/mamo-assignment-paper.git
