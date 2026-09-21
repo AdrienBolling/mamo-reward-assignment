@@ -15,9 +15,10 @@ from mamora.agents.ppo import (
     create_train_state,
     entropy_loss,
     flatten,
-    gradient_stack,
+    gradient_stacks,
     normalize_advantages,
     update,
+    update_stack,
 )
 from mamora.operators.aggregate import weighted_sum
 
@@ -151,7 +152,7 @@ def _standard_ppo_loss(params, apply_fn, flat, cfg, weights):
     return policy + cfg.vf_coef * jnp.sum(weights * value) - cfg.ent_coef * entropy
 
 
-def test_the_weighted_stack_plus_entropy_is_the_standard_ppo_gradient(model, params, batch):
+def test_the_weighted_update_stack_plus_entropy_is_the_standard_ppo_gradient(model, params, batch):
     cfg = PPOConfig(channel_weights=(1.0, 0.5, 2.0))
     weights = cfg.weights(NUM_CHANNELS)
     flat = flatten(batch)
@@ -159,7 +160,8 @@ def test_the_weighted_stack_plus_entropy_is_the_standard_ppo_gradient(model, par
 
     # An algebraic identity: keep TF32 out of it on a GPU.
     with jax.default_matmul_precision("highest"):
-        stack, aux = gradient_stack(params, model.apply, flat, cfg, weights)
+        policy, value, aux = gradient_stacks(params, model.apply, flat, cfg, weights)
+        stack = update_stack(policy, value, cfg.vf_coef)
         entropy_grad = jax.grad(entropy_loss)(params, model.apply, flat.obs, cfg.ent_coef)
         ours = jax.tree.map(jnp.add, weighted_sum(stack, weights), entropy_grad)
         reference = jax.grad(_standard_ppo_loss)(params, model.apply, flat, cfg, weights)
@@ -169,56 +171,49 @@ def test_the_weighted_stack_plus_entropy_is_the_standard_ppo_gradient(model, par
         assert jnp.allclose(mine, theirs, atol=1e-6)
 
 
-def test_the_stack_has_one_gradient_per_channel(model, params, batch):
+def test_each_stack_has_one_gradient_per_channel(model, params, batch):
     cfg = PPOConfig()
-    stack, _ = gradient_stack(params, model.apply, flatten(batch), cfg, cfg.weights(NUM_CHANNELS))
-    for leaf, param in zip(jax.tree.leaves(stack), jax.tree.leaves(params), strict=True):
-        assert leaf.shape == (NUM_CHANNELS, *param.shape)
+    policy, value, _ = gradient_stacks(
+        params, model.apply, flatten(batch), cfg, cfg.weights(NUM_CHANNELS)
+    )
+    for stack in (policy, value):
+        for leaf, param in zip(jax.tree.leaves(stack), jax.tree.leaves(params), strict=True):
+            assert leaf.shape == (NUM_CHANNELS, *param.shape)
 
 
 def test_a_clipped_sample_gives_no_policy_gradient_to_any_channel(model, params, batch):
-    cfg = PPOConfig(vf_coef=0.0, normalize_advantage=False)
+    cfg = PPOConfig(normalize_advantage=False)
     flat = flatten(batch)
     logits, _ = model.apply(params, flat.obs)
     log_prob = jnp.take_along_axis(jax.nn.log_softmax(logits), flat.action[:, None], axis=1)[:, 0]
     # ratio = e for every sample, above 1 + clip_eps, with a positive advantage everywhere
     flat = flat._replace(log_prob=log_prob - 1.0, advantage=jnp.abs(flat.advantage) + 0.1)
-    stack, aux = gradient_stack(params, model.apply, flat, cfg, cfg.weights(NUM_CHANNELS))
+    policy, _, aux = gradient_stacks(params, model.apply, flat, cfg, cfg.weights(NUM_CHANNELS))
     assert float(aux["clip_fraction"]) == 1.0
-    assert all(jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(stack))
+    assert all(jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(policy))
 
 
-def test_the_policy_loss_never_touches_the_critic_and_the_value_loss_never_the_actor(
+def test_the_policy_stack_never_touches_the_critic_and_the_value_stack_never_the_actor(
     model, params, batch
 ):
-    flat = flatten(batch)
-    weights = PPOConfig().weights(NUM_CHANNELS)
-    policy_only, _ = gradient_stack(params, model.apply, flat, PPOConfig(vf_coef=0.0), weights)
-    assert all(jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(policy_only["params"]["critic"]))
-    assert not all(
-        jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(policy_only["params"]["actor"])
+    cfg = PPOConfig()
+    policy, value, _ = gradient_stacks(
+        params, model.apply, flatten(batch), cfg, cfg.weights(NUM_CHANNELS)
     )
-    value_only, _ = gradient_stack(
-        params,
-        model.apply,
-        flat._replace(advantage=jnp.zeros_like(flat.advantage)),
-        PPOConfig(),
-        weights,
-    )
-    assert all(jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(value_only["params"]["actor"]))
-    assert not all(
-        jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(value_only["params"]["critic"])
-    )
+    assert all(jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(policy["params"]["critic"]))
+    assert not all(jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(policy["params"]["actor"]))
+    assert all(jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(value["params"]["actor"]))
+    assert not all(jnp.allclose(leaf, 0.0) for leaf in jax.tree.leaves(value["params"]["critic"]))
 
 
-def test_channel_losses_report_one_entry_per_channel(model, params, batch):
+def test_channel_losses_report_the_policy_losses_then_the_value_losses(model, params, batch):
     cfg = PPOConfig()
     losses, aux = channel_losses(
         params, model.apply, flatten(batch), cfg, cfg.weights(NUM_CHANNELS)
     )
-    assert losses.shape == (NUM_CHANNELS,)
-    assert aux["policy_loss"].shape == (NUM_CHANNELS,)
-    assert aux["value_loss"].shape == (NUM_CHANNELS,)
+    assert losses.shape == (2 * NUM_CHANNELS,)
+    assert jnp.allclose(losses[:NUM_CHANNELS], aux["policy_loss"])
+    assert jnp.allclose(losses[NUM_CHANNELS:], aux["value_loss"])
 
 
 def test_update_runs_under_jit_and_stacks_the_measurements(model, batch):
@@ -228,7 +223,7 @@ def test_update_runs_under_jit_and_stacks_the_measurements(model, batch):
     def measure(stack):
         return jnp.sum(jnp.stack([jnp.sum(jnp.square(leaf)) for leaf in jax.tree.leaves(stack)]))
 
-    step = jax.jit(lambda s, b, k: update(s, b, k, cfg, measure=measure))
+    step = jax.jit(lambda s, b, k: update(s, b, k, cfg, measure=measure, measured="update"))
     new_state, info = step(state, batch, jax.random.key(1))
 
     assert int(new_state.step) == 4
@@ -254,6 +249,7 @@ def test_update_refuses_a_rollout_that_does_not_split_into_minibatches(model, ba
 def test_per_channel_settings_need_one_value_per_channel():
     cfg = PPOConfig(gamma=(0.9, 0.99))
     assert jnp.allclose(cfg.per_channel(cfg.gamma, 2), jnp.array([0.9, 0.99]))
+    assert jnp.allclose(cfg.per_channel([0.9, 0.99], 2), jnp.array([0.9, 0.99]))  # a config list
     assert jnp.allclose(cfg.per_channel(0.5, 3), jnp.full((3,), 0.5))
     with pytest.raises(ValueError, match="expected 3 values"):
         cfg.per_channel(cfg.gamma, 3)

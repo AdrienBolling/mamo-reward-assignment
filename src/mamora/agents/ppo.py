@@ -1,16 +1,18 @@
 """PPO that keeps the channel identity of its gradient.
 
 The rollout carries one advantage and one value target for each channel. The
-loss is a vector with one entry for each channel, and its Jacobian is the
-channel-gradient stack: the exact split of the update gradient by the channel
-that produced it. An aggregation operator turns the stack into the update.
+loss is a vector: the policy surrogate of each channel, then the value loss of
+each critic head. Its Jacobian gives two channel-gradient stacks, one for the
+policy losses and one for the value losses. The update stack is
+``policy + vf_coef * value``, the exact split of the update gradient by the
+channel that produced it. An aggregation operator turns it into the update.
+The metrics measure the policy stack by default, as document 03 asks.
 
-Entry ``k`` of the loss is the policy surrogate of channel ``k`` plus the value
-loss of critic head ``k``. The surrogate of every channel uses the clipping
-mask of the aggregate objective, ``sum_k w_k A_k``. This is what makes the
-split exact: the weighted sum of the stack, plus the entropy gradient, is the
-gradient of standard PPO with the aggregate advantage. A per-channel clip
-would instead let a channel push where the aggregate objective is clipped.
+The surrogate of every channel uses the clipping mask of the aggregate
+objective, ``sum_k w_k A_k``. This is what makes the split exact: the weighted
+sum of the update stack, plus the entropy gradient, is the gradient of standard
+PPO with the aggregate advantage. A per-channel clip would instead let a
+channel push where the aggregate objective is clipped.
 
 Advantage normalization keeps the split linear too. Each channel is centered
 on its own mean, and every channel is divided by one scale, the standard
@@ -20,9 +22,9 @@ size difference between channels that hypothesis H1 measures.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -38,26 +40,26 @@ type Measure = Callable[[ChannelGrads], Any]
 
 @dataclass(frozen=True, slots=True)
 class PPOConfig:
-    """Hyperparameters. A tuple gives one value for each channel; a float, the same for all."""
+    """Hyperparameters. A sequence gives one value for each channel; a float, the same for all."""
 
     learning_rate: float = 3e-4
-    gamma: float | tuple[float, ...] = 0.99
-    lam: float | tuple[float, ...] = 0.95
+    gamma: float | Sequence[float] = 0.99
+    lam: float | Sequence[float] = 0.95
     clip_eps: float = 0.2
     vf_coef: float = 0.5
     ent_coef: float = 0.01
     max_grad_norm: float = 0.5
     epochs: int = 4
     minibatches: int = 4
-    channel_weights: tuple[float, ...] | None = None
+    channel_weights: Sequence[float] | None = None
     normalize_advantage: bool = True
 
-    def per_channel(self, value: float | tuple[float, ...], num_channels: int) -> jax.Array:
-        """A ``(num_channels,)`` array from a float or from a tuple of that length."""
-        if isinstance(value, tuple):
+    def per_channel(self, value: float | Sequence[float], num_channels: int) -> jax.Array:
+        """A ``(num_channels,)`` array from a float or from a sequence of that length."""
+        if isinstance(value, Sequence):
             if len(value) != num_channels:
                 raise ValueError(f"expected {num_channels} values, got {value}")
-            return jnp.asarray(value, dtype=jnp.float32)
+            return jnp.asarray(tuple(value), dtype=jnp.float32)
         return jnp.full((num_channels,), value, dtype=jnp.float32)
 
     def weights(self, num_channels: int) -> jax.Array:
@@ -116,7 +118,7 @@ def _log_probs(logits: jax.Array, action: jax.Array) -> tuple[jax.Array, jax.Arr
 def channel_losses(
     params: Any, apply_fn: Callable[..., Any], batch: Batch, cfg: PPOConfig, weights: jax.Array
 ) -> tuple[jax.Array, dict[str, jax.Array]]:
-    """The loss of each channel, shape ``(N,)``, on a flat batch; see the module docstring."""
+    """The policy loss of each channel, then the value loss of each: shape ``(2N,)``."""
     logits, values = apply_fn(params, batch.obs)
     log_prob, _ = _log_probs(logits, batch.action)
     ratio = jnp.exp(log_prob - batch.log_prob)
@@ -134,7 +136,7 @@ def channel_losses(
         "clip_fraction": 1.0 - jnp.mean(mask),
         "approx_kl": jnp.mean(batch.log_prob - log_prob),
     }
-    return policy + cfg.vf_coef * value, aux
+    return jnp.concatenate([policy, value]), aux
 
 
 def entropy_loss(
@@ -146,11 +148,24 @@ def entropy_loss(
     return -ent_coef * jnp.mean(entropy)
 
 
-def gradient_stack(
+def gradient_stacks(
     params: Any, apply_fn: Callable[..., Any], batch: Batch, cfg: PPOConfig, weights: jax.Array
-) -> tuple[ChannelGrads, dict[str, jax.Array]]:
-    """The Jacobian of :func:`channel_losses`: a pytree whose leaves are ``(N, *param_shape)``."""
-    return jax.jacrev(channel_losses, has_aux=True)(params, apply_fn, batch, cfg, weights)
+) -> tuple[ChannelGrads, ChannelGrads, dict[str, jax.Array]]:
+    """The policy stack and the value stack: two pytrees whose leaves are ``(N, *param_shape)``.
+
+    One Jacobian of :func:`channel_losses`, split in two. The update stack is
+    ``policy + vf_coef * value``; see :func:`update_stack`.
+    """
+    jacobian, aux = jax.jacrev(channel_losses, has_aux=True)(params, apply_fn, batch, cfg, weights)
+    num_channels = batch.advantage.shape[0]
+    policy = jax.tree.map(lambda leaf: leaf[:num_channels], jacobian)
+    value = jax.tree.map(lambda leaf: leaf[num_channels:], jacobian)
+    return policy, value, aux
+
+
+def update_stack(policy: ChannelGrads, value: ChannelGrads, vf_coef: float) -> ChannelGrads:
+    """``policy + vf_coef * value``: the split of the update gradient by channel."""
+    return jax.tree.map(lambda p, v: p + vf_coef * v, policy, value)
 
 
 def create_train_state(
@@ -181,13 +196,15 @@ def update(
     *,
     aggregate: Aggregator = weighted_sum,
     measure: Measure | None = None,
+    measured: Literal["policy", "update"] = "policy",
 ) -> tuple[TrainState, dict[str, Any]]:
     """Run `cfg.epochs` passes of `cfg.minibatches` minibatches over the rollout.
 
-    Every minibatch builds the channel-gradient stack, aggregates it, adds the
-    entropy gradient, and applies the result. `measure` runs on each stack;
-    its outputs come back under ``info["measure"]``, stacked with the losses
-    over the ``epochs * minibatches`` updates.
+    Every minibatch builds the update stack, aggregates it, adds the entropy
+    gradient, and applies the result. `measure` runs on the policy stack, or
+    on the update stack when `measured` says so; its outputs come back under
+    ``info["measure"]``, stacked with the losses over the
+    ``epochs * minibatches`` updates.
     """
     num_channels = batch.advantage.shape[0]
     weights = cfg.weights(num_channels)
@@ -199,14 +216,15 @@ def update(
         raise ValueError(f"{size} samples do not split into {cfg.minibatches} minibatches")
 
     def minibatch_step(state: TrainState, minibatch: Batch) -> tuple[TrainState, dict[str, Any]]:
-        stack, aux = gradient_stack(state.params, state.apply_fn, minibatch, cfg, weights)
+        policy, value, aux = gradient_stacks(state.params, state.apply_fn, minibatch, cfg, weights)
+        stack = update_stack(policy, value, cfg.vf_coef)
         entropy_grad = jax.grad(entropy_loss)(
             state.params, state.apply_fn, minibatch.obs, cfg.ent_coef
         )
         grads = jax.tree.map(jnp.add, aggregate(stack, weights), entropy_grad)
         info = dict(aux)
         if measure is not None:
-            info["measure"] = measure(stack)
+            info["measure"] = measure(policy if measured == "policy" else stack)
         return state.apply_gradients(grads=grads), info
 
     def epoch_step(
