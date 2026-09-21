@@ -80,6 +80,12 @@ class ChannelSpec:
         for index in self.objective:
             if not 0 <= index < len(self.objectives):
                 raise ValueError(f"objective index {index} is outside {self.objectives}")
+        for name in (*self.names, *self.objectives):
+            if "/" in name or "|" in name:
+                raise ValueError(
+                    f"a channel or objective name must not contain '/' or '|', "
+                    f"the separators of record keys; got {name!r}"
+                )
 
     def __len__(self) -> int:
         return len(self.names)
@@ -187,7 +193,9 @@ class StepOutput(NamedTuple):
             state of the new episode.
         reward: Channel rewards of the transition that just happened, with shape
             ``(num_channels, num_agents)``.
-        done: Per-agent termination of that transition, shape ``(num_agents,)``.
+        done: Per-agent termination of that transition, shape ``(num_agents,)``:
+            no value follows for that agent. A truncation leaves it false and
+            sets `episode_done`, so a learner bootstraps from `final_obs`.
         episode_done: True on the step where the episode ended and the
             environment reset itself.
         final_obs: The observation of the state this step reached, before any

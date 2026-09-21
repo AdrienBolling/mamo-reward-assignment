@@ -36,6 +36,9 @@ argument. The spec holds no array, so it never enters a pytree.
 Use `spec.select(...)` to get the positions of the channels with a given label,
 and `spec.label(i)` to get the log name of one channel.
 
+A channel name and an objective name contain no `/` and no `|`. The run record
+uses them as separators, for example `grad/cosine/dense|final`.
+
 ## 3. The arrays
 
 1. The channel axis is axis 0 of every reward array.
@@ -65,6 +68,14 @@ The environment resets itself when the episode ends. On that step:
 Use `final_obs`, and never `obs`, to bootstrap the value of the episode that
 ended. An agent that reads `obs` on that step computes the action of one episode
 from the state of another.
+
+`done` and `episode_done` together tell a termination from a truncation:
+
+| `done[i]` | `episode_done` | Meaning for agent `i` |
+|---|---|---|
+| true | true | The episode ended. No value follows; do not bootstrap. |
+| false | true | The episode was cut, by a time limit or by another agent. Bootstrap from `final_obs`. |
+| false | false | The episode goes on. |
 
 ## 5. Rules for a split
 
