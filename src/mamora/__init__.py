@@ -15,6 +15,5 @@ The package has these layers:
 - ``runner``     - binds a config to an environment, an agent and a record.
 - ``analysis``   - statistics and figures computed from run records.
 
-Each layer states its own import rule in its docstring. The ``contract`` module
-arrives with the first implementation step.
+Each layer states its own import rule in its docstring.
 """
