@@ -51,6 +51,8 @@ def test_crossed_spec_orders_objective_first_then_granularity():
         ({"granularity": (Granularity.DENSE,)}, "same length"),
         ({"names": ("dense", "dense", "final")}, "must be unique"),
         ({"objective": (0, 0, 1)}, "outside"),
+        ({"names": ("dense", "a|b", "final")}, "must not contain"),
+        ({"objectives": ("food/water",)}, "must not contain"),
     ],
 )
 def test_spec_refuses_an_inconsistent_definition(kwargs, message):
